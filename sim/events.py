@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, List, Optional
 
 from .state import State, apply_deltas, apply_faction_deltas
+
+MINOR_RIOT_COOLDOWN_TURNS = 2
+MAJOR_RIOT_COOLDOWN_TURNS = 6
+MINOR_RIOT_BREACH_RISK = 75.0
+MINOR_RIOT_BREACH_PROB = 0.15
 
 
 @dataclass(frozen=True)
@@ -21,6 +26,7 @@ class Event:
     choices: List[EventChoice]
     condition: Callable[[State], bool]
     apply: Callable[[str, State], State]
+    actor: str = "system"
 
     def choose(self, rng) -> str:
         return rng.choice(self.choices).id
@@ -28,6 +34,10 @@ class Event:
 
 def choose_event(state: State, rng) -> Optional[Event]:
     eligible = [event for event in EVENTS if event.condition(state)]
+    if not eligible:
+        return None
+
+    eligible = apply_riot_gate(eligible, state, rng)
     if not eligible:
         return None
 
@@ -42,6 +52,63 @@ def choose_event(state: State, rng) -> Optional[Event]:
         if upto >= pick:
             return event
     return top[-1]
+
+
+def riot_condition(state: State) -> bool:
+    return (
+        state.public_support <= 30.0
+        and state.stability <= 40.0
+        and state.revolt_risk >= 60.0
+        and state.turn >= state.riot_cooldown_until
+    )
+
+
+def minor_riot_condition(state: State) -> bool:
+    return (
+        state.public_support <= 45.0
+        and state.stability <= 55.0
+        and state.revolt_risk >= 55.0
+    )
+
+
+def apply_riot_gate(events: List[Event], state: State, rng) -> List[Event]:
+    if state.turn >= state.riot_cooldown_until:
+        return events
+
+    gated: List[Event] = []
+    for event in events:
+        if event.id != "minor-riot":
+            gated.append(event)
+            continue
+        if state.revolt_risk >= MINOR_RIOT_BREACH_RISK and rng.random() < MINOR_RIOT_BREACH_PROB:
+            gated.append(event)
+    return gated
+
+
+def event_minor_riot(choice: str, state: State) -> State:
+    _choice = choice
+    state = apply_deltas(
+        state,
+        stability=-2,
+        public_support=-3,
+        revolt_risk=2,
+        treasury=-1,
+        legitimacy=-1,
+    )
+    return replace(state, riot_cooldown_until=state.turn + MINOR_RIOT_COOLDOWN_TURNS)
+
+
+def event_major_riot(choice: str, state: State) -> State:
+    _choice = choice
+    state = apply_deltas(
+        state,
+        stability=5,
+        public_support=7,
+        revolt_risk=-20,
+        treasury=-3,
+        legitimacy=-1,
+    )
+    return replace(state, riot_cooldown_until=state.turn + MAJOR_RIOT_COOLDOWN_TURNS)
 
 
 def event_granary(choice: str, state: State) -> State:
@@ -124,7 +191,178 @@ def event_famine_relief(choice: str, state: State) -> State:
     return apply_faction_deltas(state, {"clans": 2, "royal": -2})
 
 
+def event_chancellor(choice: str, state: State) -> State:
+    if choice == "council":
+        return apply_deltas(state, stability=0.5, legitimacy=0.5)
+    return apply_deltas(state, stability=-0.5, legitimacy=-0.5)
+
+
+def event_general(choice: str, state: State) -> State:
+    if choice == "patrols":
+        state = apply_deltas(state, stability=0.5, revolt_risk=-1, treasury=-0.5)
+        return apply_faction_deltas(state, {"warlords": 0.5})
+    state = apply_deltas(state, stability=-0.5, revolt_risk=0.5)
+    return apply_faction_deltas(state, {"warlords": 0.5})
+
+
+def event_treasurer(choice: str, state: State) -> State:
+    if choice == "audit":
+        return apply_deltas(state, treasury=1, public_support=-0.5)
+    return apply_deltas(state, treasury=0.5, public_support=0.5)
+
+
+def event_clan_head(choice: str, state: State) -> State:
+    if choice == "pledge":
+        state = apply_deltas(state, stability=0.5, public_support=0.5)
+        return apply_faction_deltas(state, {"clans": 0.5, "royal": -0.5})
+    state = apply_deltas(state, stability=-0.5, legitimacy=-0.5)
+    return apply_faction_deltas(state, {"clans": 0.5})
+
+
+def event_spymaster(choice: str, state: State) -> State:
+    if choice == "reports":
+        return apply_deltas(state, stability=0.5, revolt_risk=-1)
+    return apply_deltas(state, stability=-0.5, revolt_risk=0.5)
+
+
 EVENTS: List[Event] = [
+    Event(
+        id="minor-riot",
+        title="소규모 폭동",
+        weight=0.9,
+        priority=3,
+        choices=[
+            EventChoice(id="contain", label="경비를 늘려 소요를 막는다."),
+            EventChoice(id="appease", label="현장 조정을 통해 진정시킨다."),
+        ],
+        condition=minor_riot_condition,
+        apply=event_minor_riot,
+        actor="system",
+    ),
+    Event(
+        id="major-riot",
+        title="대규모 폭동",
+        weight=1.2,
+        priority=4,
+        choices=[
+            EventChoice(id="contain", label="병력을 동원해 폭동을 진압한다."),
+            EventChoice(id="appease", label="급히 민심을 달래며 진정시킨다."),
+        ],
+        condition=riot_condition,
+        apply=event_major_riot,
+        actor="system",
+    ),
+    Event(
+        id="chancellor-council",
+        title="재상 회의",
+        weight=0.2,
+        priority=0,
+        choices=[
+            EventChoice(id="council", label="개혁 의제를 올려 합의를 만든다."),
+            EventChoice(id="delay", label="논의를 미루고 현상 유지를 택한다."),
+        ],
+        condition=lambda state: (
+            state.actors["Chancellor"]["influence"] >= 70
+            and state.actors["Chancellor"]["loyalty"] >= 55
+        ),
+        apply=event_chancellor,
+        actor="Chancellor",
+    ),
+    Event(
+        id="general-patrols",
+        title="장군의 순찰",
+        weight=0.2,
+        priority=0,
+        choices=[
+            EventChoice(id="patrols", label="도성을 순찰해 질서를 다잡는다."),
+            EventChoice(id="standby", label="병력을 대기시켜 부담을 줄인다."),
+        ],
+        condition=lambda state: state.actors["General"]["ambition"] >= 70,
+        apply=event_general,
+        actor="General",
+    ),
+    Event(
+        id="treasurer-audit",
+        title="재정 감사",
+        weight=0.2,
+        priority=0,
+        choices=[
+            EventChoice(id="audit", label="지출을 엄격히 통제한다."),
+            EventChoice(id="relief", label="지원을 유지하며 완충한다."),
+        ],
+        condition=lambda state: (
+            state.actors["Treasurer"]["loyalty"] >= 70 and state.treasury <= 55
+        ),
+        apply=event_treasurer,
+        actor="Treasurer",
+    ),
+    Event(
+        id="clanhead-pledge",
+        title="문벌의 충성",
+        weight=0.2,
+        priority=0,
+        choices=[
+            EventChoice(id="pledge", label="충성 서약을 받아낸다."),
+            EventChoice(id="ignore", label="침묵 속 긴장을 두고 본다."),
+        ],
+        condition=lambda state: state.actors["ClanHead"]["influence"] >= 70,
+        apply=event_clan_head,
+        actor="ClanHead",
+    ),
+    Event(
+        id="spymaster-reports",
+        title="정보 보고",
+        weight=0.2,
+        priority=0,
+        choices=[
+            EventChoice(id="reports", label="잠복 정보를 바탕으로 정비한다."),
+            EventChoice(id="overlook", label="위협을 과소평가한다."),
+        ],
+        condition=lambda state: state.actors["Spymaster"]["influence"] >= 70,
+        apply=event_spymaster,
+        actor="Spymaster",
+    ),
+    Event(
+        id="chancellor-faction-lean",
+        title="재상의 중재",
+        weight=0.2,
+        priority=0,
+        choices=[
+            EventChoice(id="council", label="세력 간 균형을 강조한다."),
+            EventChoice(id="delay", label="일정을 늦춰 변화를 피한다."),
+        ],
+        condition=lambda state: state.actors["Chancellor"]["loyalty"] <= 35,
+        apply=event_chancellor,
+        actor="Chancellor",
+    ),
+    Event(
+        id="general-frontier",
+        title="군단의 동향",
+        weight=0.2,
+        priority=0,
+        choices=[
+            EventChoice(id="patrols", label="군단을 분산 배치한다."),
+            EventChoice(id="standby", label="병력을 한곳에 모은다."),
+        ],
+        condition=lambda state: (
+            state.actors["General"]["influence"] >= 65 and state.factions["warlords"] >= 60
+        ),
+        apply=event_general,
+        actor="General",
+    ),
+    Event(
+        id="spymaster-whispers",
+        title="밀담 소문",
+        weight=0.2,
+        priority=0,
+        choices=[
+            EventChoice(id="reports", label="소문을 통제한다."),
+            EventChoice(id="overlook", label="흐름을 지켜본다."),
+        ],
+        condition=lambda state: state.actors["Spymaster"]["ambition"] >= 70,
+        apply=event_spymaster,
+        actor="Spymaster",
+    ),
     Event(
         id="granary-crackdown",
         title="곡창의 균열",
@@ -136,6 +374,7 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.turn == 1,
         apply=event_granary,
+        actor="system",
     ),
     Event(
         id="border-lords",
@@ -148,6 +387,7 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.factions["warlords"] >= 50,
         apply=event_border,
+        actor="system",
     ),
     Event(
         id="bureaucrat-reform",
@@ -160,6 +400,7 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.factions["bureaucrats"] >= 55,
         apply=event_reform,
+        actor="system",
     ),
     Event(
         id="trade-charter",
@@ -172,6 +413,7 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.factions["merchants"] >= 50,
         apply=event_trade,
+        actor="system",
     ),
     Event(
         id="harvest-appeal",
@@ -184,6 +426,7 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.food >= 55,
         apply=event_harvest,
+        actor="system",
     ),
     Event(
         id="royal-guard",
@@ -196,6 +439,7 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.legitimacy <= 55,
         apply=event_royal_guard,
+        actor="system",
     ),
     Event(
         id="tax-reform",
@@ -208,6 +452,7 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.treasury <= 45,
         apply=event_tax,
+        actor="system",
     ),
     Event(
         id="court-petition",
@@ -220,6 +465,7 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.factions["clans"] >= 52 and state.stability < 60,
         apply=event_court_choice,
+        actor="system",
     ),
     Event(
         id="black-market",
@@ -232,6 +478,7 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.public_support < 55,
         apply=event_black_market,
+        actor="system",
     ),
     Event(
         id="famine-relief",
@@ -244,5 +491,6 @@ EVENTS: List[Event] = [
         ],
         condition=lambda state: state.food < 40,
         apply=event_famine_relief,
+        actor="system",
     ),
 ]

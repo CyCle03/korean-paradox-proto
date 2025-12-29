@@ -4,7 +4,7 @@ from dataclasses import replace
 from typing import Optional, Tuple
 
 from .events import Event, choose_event
-from .state import State, apply_deltas
+from .state import State, apply_deltas, clamp
 
 
 def balance_score(factions: dict[str, float]) -> float:
@@ -54,6 +54,7 @@ def is_riot(state: State) -> bool:
 def step(state: State, rng) -> Tuple[State, Optional[Event]]:
     updated = compute_turn_updates(state)
     updated = replace(updated, turn=state.turn + 1)
+    updated = apply_actor_drift(updated)
 
     event = choose_event(updated, rng)
     if event is None:
@@ -61,4 +62,67 @@ def step(state: State, rng) -> Tuple[State, Optional[Event]]:
 
     choice = event.choose(rng)
     updated = event.apply(choice, updated)
+    updated = apply_faction_soft_caps(state, updated)
     return updated, event
+
+
+def apply_faction_soft_caps(previous: State, updated: State) -> State:
+    factions = dict(updated.factions)
+    for key, value in updated.factions.items():
+        before = previous.factions.get(key, value)
+        delta = value - before
+        if delta <= 0:
+            continue
+        if before >= 95.0:
+            delta *= 0.15
+        elif before >= 85.0:
+            delta *= 0.35
+        factions[key] = clamp(before + delta)
+    return replace(updated, factions=factions)
+
+
+def clamp_delta(value: float, limit: float = 2.0) -> float:
+    return max(-limit, min(limit, value))
+
+
+def apply_actor_drift(state: State) -> State:
+    actors = {role: dict(stats) for role, stats in state.actors.items()}
+
+    def adjust(role: str, loyalty: float, ambition: float, influence: float) -> None:
+        stats = actors[role]
+        stats["loyalty"] = clamp(stats["loyalty"] + clamp_delta(loyalty))
+        stats["ambition"] = clamp(stats["ambition"] + clamp_delta(ambition))
+        stats["influence"] = clamp(stats["influence"] + clamp_delta(influence))
+
+    adjust(
+        "Chancellor",
+        loyalty=(state.stability - 50.0) / 30.0,
+        ambition=(state.factions["bureaucrats"] - 50.0) / 35.0,
+        influence=(state.legitimacy - 50.0) / 30.0,
+    )
+    adjust(
+        "General",
+        loyalty=(state.stability - 50.0) / 35.0 + (state.factions["warlords"] - 50.0) / 60.0,
+        ambition=(state.factions["warlords"] - 50.0) / 30.0,
+        influence=(state.revolt_risk - 50.0) / 30.0,
+    )
+    adjust(
+        "Treasurer",
+        loyalty=(state.treasury - 50.0) / 28.0,
+        ambition=(50.0 - state.treasury) / 35.0,
+        influence=(state.factions["merchants"] - 50.0) / 40.0,
+    )
+    adjust(
+        "ClanHead",
+        loyalty=(state.stability - 50.0) / 35.0 + (state.factions["clans"] - 50.0) / 60.0,
+        ambition=(state.factions["clans"] - 50.0) / 28.0,
+        influence=(state.public_support - 50.0) / 40.0,
+    )
+    adjust(
+        "Spymaster",
+        loyalty=(state.legitimacy - 50.0) / 35.0,
+        ambition=(state.revolt_risk - 50.0) / 30.0,
+        influence=(50.0 - state.public_support) / 40.0,
+    )
+
+    return replace(state, actors=actors)

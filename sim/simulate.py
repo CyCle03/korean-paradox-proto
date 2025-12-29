@@ -28,6 +28,7 @@ def run_simulation(turns: int, rng) -> Tuple[List[Dict], Dict]:
                 "event": None if event is None else {
                     "id": event.id,
                     "title": event.title,
+                    "actor": event.actor,
                 },
             }
         )
