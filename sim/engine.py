@@ -81,6 +81,23 @@ def apply_faction_soft_caps(previous: State, updated: State) -> State:
     return replace(updated, factions=factions)
 
 
+DECISION_DURATION = 10
+DECISION_ID = "riot-policy"
+DECISION_CAUSE_TAGS = ["riot", "security"]
+
+
+def apply_decision_immediate(state: State, choice: str) -> State:
+    if choice == "A":
+        return apply_deltas(state, revolt_risk=-3.0, public_support=-1.5, stability=0.8)
+    return apply_deltas(state, treasury=-1.2)
+
+
+def apply_decision_tick(state: State, choice: str) -> State:
+    if choice == "A":
+        return apply_deltas(state, revolt_risk=0.3, stability=0.2)
+    return apply_deltas(state, revolt_risk=-0.4, stability=0.2, treasury=-0.3)
+
+
 def clamp_delta(value: float, limit: float = 2.0) -> float:
     return max(-limit, min(limit, value))
 
