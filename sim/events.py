@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Callable, List, Optional
 
 from .state import State, apply_deltas, apply_faction_deltas
@@ -9,6 +9,19 @@ MINOR_RIOT_COOLDOWN_TURNS = 2
 MAJOR_RIOT_COOLDOWN_TURNS = 6
 MINOR_RIOT_BREACH_RISK = 75.0
 MINOR_RIOT_BREACH_PROB = 0.15
+CAUSE_TAGS = (
+    "stability",
+    "economy",
+    "factions",
+    "security",
+    "intrigue",
+    "food",
+    "trade",
+    "bureaucracy",
+    "clan",
+    "military",
+    "riot",
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +40,9 @@ class Event:
     condition: Callable[[State], bool]
     apply: Callable[[str, State], State]
     actor: str = "system"
+    cause_tags: List[str] = field(default_factory=list)
+    severity: int = 1
+    stakeholders: List[str] = field(default_factory=list)
 
     def choose(self, rng) -> str:
         return rng.choice(self.choices).id
@@ -238,6 +254,9 @@ EVENTS: List[Event] = [
         condition=minor_riot_condition,
         apply=event_minor_riot,
         actor="system",
+        cause_tags=["riot", "security"],
+        severity=2,
+        stakeholders=[],
     ),
     Event(
         id="major-riot",
@@ -251,6 +270,9 @@ EVENTS: List[Event] = [
         condition=riot_condition,
         apply=event_major_riot,
         actor="system",
+        cause_tags=["riot", "security"],
+        severity=4,
+        stakeholders=[],
     ),
     Event(
         id="chancellor-council",
@@ -267,6 +289,9 @@ EVENTS: List[Event] = [
         ),
         apply=event_chancellor,
         actor="Chancellor",
+        cause_tags=["bureaucracy", "stability"],
+        severity=2,
+        stakeholders=["Chancellor"],
     ),
     Event(
         id="general-patrols",
@@ -280,6 +305,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.actors["General"]["ambition"] >= 70,
         apply=event_general,
         actor="General",
+        cause_tags=["security", "military"],
+        severity=2,
+        stakeholders=["General"],
     ),
     Event(
         id="treasurer-audit",
@@ -295,6 +323,9 @@ EVENTS: List[Event] = [
         ),
         apply=event_treasurer,
         actor="Treasurer",
+        cause_tags=["economy", "bureaucracy"],
+        severity=2,
+        stakeholders=["Treasurer"],
     ),
     Event(
         id="clanhead-pledge",
@@ -308,6 +339,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.actors["ClanHead"]["influence"] >= 70,
         apply=event_clan_head,
         actor="ClanHead",
+        cause_tags=["clan", "stability"],
+        severity=2,
+        stakeholders=["ClanHead"],
     ),
     Event(
         id="spymaster-reports",
@@ -321,6 +355,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.actors["Spymaster"]["influence"] >= 70,
         apply=event_spymaster,
         actor="Spymaster",
+        cause_tags=["intrigue", "security"],
+        severity=2,
+        stakeholders=["Spymaster"],
     ),
     Event(
         id="chancellor-faction-lean",
@@ -334,6 +371,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.actors["Chancellor"]["loyalty"] <= 35,
         apply=event_chancellor,
         actor="Chancellor",
+        cause_tags=["bureaucracy", "factions"],
+        severity=2,
+        stakeholders=["Chancellor"],
     ),
     Event(
         id="general-frontier",
@@ -349,6 +389,9 @@ EVENTS: List[Event] = [
         ),
         apply=event_general,
         actor="General",
+        cause_tags=["military", "security"],
+        severity=2,
+        stakeholders=["General"],
     ),
     Event(
         id="spymaster-whispers",
@@ -362,6 +405,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.actors["Spymaster"]["ambition"] >= 70,
         apply=event_spymaster,
         actor="Spymaster",
+        cause_tags=["intrigue", "stability"],
+        severity=2,
+        stakeholders=["Spymaster"],
     ),
     Event(
         id="granary-crackdown",
@@ -375,6 +421,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.turn == 1,
         apply=event_granary,
         actor="system",
+        cause_tags=["economy", "food"],
+        severity=3,
+        stakeholders=[],
     ),
     Event(
         id="border-lords",
@@ -388,6 +437,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.factions["warlords"] >= 50,
         apply=event_border,
         actor="system",
+        cause_tags=["military", "security"],
+        severity=3,
+        stakeholders=[],
     ),
     Event(
         id="bureaucrat-reform",
@@ -401,6 +453,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.factions["bureaucrats"] >= 55,
         apply=event_reform,
         actor="system",
+        cause_tags=["bureaucracy", "factions"],
+        severity=3,
+        stakeholders=[],
     ),
     Event(
         id="trade-charter",
@@ -414,6 +469,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.factions["merchants"] >= 50,
         apply=event_trade,
         actor="system",
+        cause_tags=["trade", "economy"],
+        severity=2,
+        stakeholders=[],
     ),
     Event(
         id="harvest-appeal",
@@ -427,6 +485,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.food >= 55,
         apply=event_harvest,
         actor="system",
+        cause_tags=["food", "economy"],
+        severity=2,
+        stakeholders=[],
     ),
     Event(
         id="royal-guard",
@@ -440,6 +501,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.legitimacy <= 55,
         apply=event_royal_guard,
         actor="system",
+        cause_tags=["security", "factions"],
+        severity=3,
+        stakeholders=[],
     ),
     Event(
         id="tax-reform",
@@ -453,6 +517,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.treasury <= 45,
         apply=event_tax,
         actor="system",
+        cause_tags=["economy", "bureaucracy"],
+        severity=3,
+        stakeholders=[],
     ),
     Event(
         id="court-petition",
@@ -466,6 +533,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.factions["clans"] >= 52 and state.stability < 60,
         apply=event_court_choice,
         actor="system",
+        cause_tags=["clan", "factions"],
+        severity=3,
+        stakeholders=[],
     ),
     Event(
         id="black-market",
@@ -479,6 +549,9 @@ EVENTS: List[Event] = [
         condition=lambda state: state.public_support < 55,
         apply=event_black_market,
         actor="system",
+        cause_tags=["trade", "intrigue"],
+        severity=2,
+        stakeholders=[],
     ),
     Event(
         id="famine-relief",
@@ -492,5 +565,8 @@ EVENTS: List[Event] = [
         condition=lambda state: state.food < 40,
         apply=event_famine_relief,
         actor="system",
+        cause_tags=["food", "stability"],
+        severity=4,
+        stakeholders=[],
     ),
 ]

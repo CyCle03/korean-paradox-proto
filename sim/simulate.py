@@ -4,7 +4,7 @@ import json
 from typing import Dict, Iterable, List, Tuple
 
 from .engine import is_bankrupt, is_riot, step
-from .state import initial_state, serialize_state
+from .state import ACTOR_ROLES, initial_state, serialize_state
 
 
 def run_simulation(turns: int, rng) -> Tuple[List[Dict], Dict]:
@@ -25,10 +25,15 @@ def run_simulation(turns: int, rng) -> Tuple[List[Dict], Dict]:
         log.append(
             {
                 "state": serialize_state(state),
-                "event": None if event is None else {
+                "event": None
+                if event is None
+                else {
                     "id": event.id,
                     "title": event.title,
-                    "actor": event.actor,
+                    "actor": normalize_actor(event.actor),
+                    "cause_tags": event.cause_tags,
+                    "severity": event.severity,
+                    "stakeholders": event.stakeholders,
                 },
             }
         )
@@ -47,3 +52,7 @@ def write_jsonl(path, records: Iterable[Dict]) -> None:
     with open(path, "w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def normalize_actor(actor: str) -> str:
+    return actor if actor in ACTOR_ROLES else "Chancellor"

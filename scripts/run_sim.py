@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 from sim.engine import is_bankrupt, is_riot, step
 from sim.metrics import compute_metrics
 from sim.simulate import run_simulation, write_jsonl
-from sim.state import initial_state, serialize_state
+from sim.state import ACTOR_ROLES, initial_state, serialize_state
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,7 +47,14 @@ def run_with_scenario(turns: int, rng, scenario: str) -> Tuple[List[Dict], Dict]
                 "state": serialize_state(state),
                 "event": None
                 if event is None
-                else {"id": event.id, "title": event.title, "actor": event.actor},
+                else {
+                    "id": event.id,
+                    "title": event.title,
+                    "actor": event.actor if event.actor in ACTOR_ROLES else "Chancellor",
+                    "cause_tags": event.cause_tags,
+                    "severity": event.severity,
+                    "stakeholders": event.stakeholders,
+                },
             }
         )
 
