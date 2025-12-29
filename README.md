@@ -29,6 +29,28 @@ uvicorn sim.api:app --reload
 - `POST /step` 1턴 진행
 - `POST /run?turns=120&seed=42` 배치 실행
 
+## 실행 (AI 요약 API)
+
+```bash
+uvicorn app.main:app --reload
+```
+
+- `POST /ai/explain`
+- `POST /ai/chronicle`
+
+환경변수:
+
+- `OPENAI_API_KEY` 설정 시 LLM 모드 사용
+- `OPENAI_MODEL` 기본값: `gpt-4o-mini`
+
+요청 예시:
+
+```bash
+curl -X POST http://127.0.0.1:8000/ai/explain \\
+  -H 'Content-Type: application/json' \\
+  -d '{\"scenario\":\"warlord\",\"seed\":42,\"turn_window\":20,\"log_path\":null}'
+```
+
 ## 테스트
 
 ```bash
@@ -41,4 +63,7 @@ pytest
 - `sim/engine.py` 턴 기반 규칙 계산
 - `sim/events.py` 이벤트 10개 및 선택 로직
 - `scripts/run_sim.py` JSONL 기록 CLI
-- `tests/` pytest 5개
+- `app/main.py` AI 요약 API 엔드포인트
+- `ai/summarize.py` 로그 로딩 및 요약 로직
+- `ai/prompts.py` LLM 프롬프트 템플릿
+- `tests/` pytest 모음
