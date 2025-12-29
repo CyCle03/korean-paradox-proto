@@ -91,16 +91,8 @@ def build_context(events: List[Dict]) -> str:
 def rule_explain(events: List[Dict], records: List[Dict]) -> str:
     tags = Counter(tag for event in events for tag in event.get("cause_tags", []))
     tag_list = [item for item, _count in tags.most_common(2)]
-    avg_rebellion = statistics.mean(
-        record.get("state", {}).get("revolt_risk", 0.0) for record in records
-    ) if records else 0.0
+    tone = explain_tone(events, records)
     max_sev = max([event.get("severity", 1) for event in events] or [1])
-    if max_sev >= 5 or avg_rebellion >= 75:
-        tone = "붕괴 직전"
-    elif max_sev >= 4 or avg_rebellion >= 60:
-        tone = "위기"
-    else:
-        tone = "주의"
 
     if tag_list:
         tag_names = [CAUSE_TAG_KR.get(tag, tag) for tag in tag_list]
@@ -125,6 +117,20 @@ def rule_explain(events: List[Dict], records: List[Dict]) -> str:
         risk_sentence = "조짐은 약하지만 방치하면 파국의 문턱으로 치달을 조짐이다."
 
     return " ".join([cause_sentence, actor_sentence, risk_sentence])
+
+
+def explain_tone(events: List[Dict], records: List[Dict]) -> str:
+    avg_rebellion = (
+        statistics.mean(record.get("state", {}).get("revolt_risk", 0.0) for record in records)
+        if records
+        else 0.0
+    )
+    max_sev = max([event.get("severity", 1) for event in events] or [1])
+    if max_sev >= 5 or avg_rebellion >= 75:
+        return "붕괴 직전"
+    if max_sev >= 4 or avg_rebellion >= 60:
+        return "위기"
+    return "주의"
 
 
 def rule_chronicle(events: List[Dict]) -> str:

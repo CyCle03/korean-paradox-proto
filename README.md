@@ -37,6 +37,7 @@ uvicorn app.main:app --reload
 
 - `POST /ai/explain`
 - `POST /ai/chronicle`
+- `GET /` 데모 페이지
 
 환경변수:
 
@@ -55,6 +56,12 @@ curl -X POST http://127.0.0.1:8000/ai/explain \\
 
 ```bash
 pytest
+```
+
+## 검증 (원샷)
+
+```bash
+python -m scripts.verify_all
 ```
 
 ## 프로젝트 구조
