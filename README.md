@@ -11,7 +11,7 @@ UI는 기능 검증을 위한 **최소 데모 수준**만 제공된다.
 
 ## 핵심 특징
 
-- 세력 기반 정치 시뮬레이션
+- 세력 기반 정치 시뮬레이션 + 사건 로그
 - 핵심 인물 5명 + 이벤트 시스템
 - seed 기반 재현성 보장
 - 드라마틱 상황 요약 (`/ai/explain`)
@@ -20,40 +20,59 @@ UI는 기능 검증을 위한 **최소 데모 수준**만 제공된다.
 
 ---
 
-## 데모 실행 방법
+## 빠른 시작 (데모 UI)
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
-브라우저 접속:
-http://127.0.0.1:8000/
+```
 
-데모 보는 법
-scenario를 warlord, seed를 42로 설정
-
-Explain 버튼을 눌러 현재 위기 상황 요약(드라마틱 3문장) 확인
-
-Chronicle 버튼으로 10년간의 정치 연대기 요약(6~10줄) 확인
+- 브라우저 접속: `http://127.0.0.1:8000/`
+- 시나리오: `baseline`, `famine`, `deficit`, `warlord`
+추천 데모 흐름:
+- `scenario=warlord`, `seed=42`, `turns=120` 설정
+- Run 버튼으로 로그 생성
+- Explain 버튼으로 위기 상황 요약(드라마틱 3문장)
+- Chronicle 버튼으로 10년간의 연대기 요약(6~10줄)
 
 같은 시뮬 결과를 두 가지 톤(연출용 / 기록용)으로 비교하는 것이 핵심 포인트다.
 
-예시 출력 (Explain)
-치안 붕괴와 권력 다툼이 겹치며 국가의 균형이 무너지고 있다.
-이 위기의 중심에는 General이 있으며, 심각도 4의 충돌을 초래했다.
-지금 대응하지 않으면 사태는 파국의 문턱을 넘을 가능성이 크다.
+---
 
-이 프로젝트가 증명하는 것
-LLM을 턴마다 호출하지 않아도 충분히 강한 게임 연출이 가능하다.
+## API 요약
 
-로그·메타데이터 기반 AI 요약은 통제 가능하고 재현 가능한 방식으로 활용할 수 있다.
+- `POST /api/run`: 시뮬 실행 후 로그 생성
+- `POST /api/snapshot`: 로그 기반 스냅샷 로드
+- `POST /api/next_turn`: 다음 턴 진행
+- `POST /ai/explain`: 드라마틱 요약
+- `POST /ai/chronicle`: 연대기 요약
+- `POST /api/pending_decision`, `POST /api/decide`: 결단 이벤트 처리
+- `POST /api/set_budget`: 예산 배분 이벤트 처리
 
-AI는 결정을 대신하지 않고, 플레이어의 판단을 압박하는 연출 장치로 기능할 수 있다.
+---
 
-범위와 한계
-이 프로젝트는 완성된 게임이 아니다.
+## CLI 스크립트
 
-UI/콘텐츠 볼륨보다 시뮬 구조와 연출 검증에 초점을 둔다.
+```bash
+python -m scripts.run_sim --scenario warlord --seed 42 --turns 120 --out logs/run_warlord_42.jsonl
+python -m scripts.demo_run --scenario warlord --seed 42 --turns 120 --out out/demo_report.md
+python -m scripts.verify_all
+```
 
+---
+
+## 테스트
+
+```bash
+pytest
+```
+
+---
+
+## 범위와 한계
+
+이 프로젝트는 완성된 게임이 아니다.  
+UI/콘텐츠 볼륨보다 시뮬 구조와 연출 검증에 초점을 둔다.  
 실제 게임 적용 시에는 별도의 UX/밸런스 설계가 필요하다.
