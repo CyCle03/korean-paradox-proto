@@ -310,6 +310,8 @@ DECISION_SPECS = {
     },
 }
 
+COOLDOWN_TURNS = 10
+
 
 def decision_effects(decision_id, choice):
     if decision_id == "riot_response":
@@ -348,28 +350,85 @@ def append_event_record(path, state, event):
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def decision_already_logged(tail_buffer, turn, decision_id):
-    for item in tail_buffer:
-        if item.get("turn") != turn:
+def ensure_event_objects(path):
+    records = []
+    needs_rewrite = False
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if record.get("event") is None:
+                    record["event"] = {}
+                    needs_rewrite = True
+                records.append(record)
+    except json.JSONDecodeError:
+        return (400, "Invalid JSONL record")
+    if not needs_rewrite:
+        return None
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with temp_path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    os.replace(temp_path, path)
+    return None
+
+
+def decision_logged_in_turn(events, decision_id):
+    for event in events:
+        if not isinstance(event, dict):
             continue
-        event = item.get("event") or {}
         if event.get("type") == "decision" and event.get("id") == decision_id:
             return True
     return False
 
 
-def check_pending_decision(state, tail_buffer, turn):
+def scan_decision_context(path, cursor, decision_id):
+    current_events = []
+    last_decision_turn = None
+    has_records = False
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                has_records = True
+                state = record.get("state")
+                if not isinstance(state, dict):
+                    continue
+                state_turn = state.get("turn")
+                if state_turn is None:
+                    continue
+                if state_turn == cursor:
+                    event = record.get("event")
+                    if isinstance(event, dict):
+                        current_events.append(event)
+                if state_turn <= cursor:
+                    event = record.get("event") or {}
+                    if event.get("type") == "decision" and event.get("id") == decision_id:
+                        last_decision_turn = state_turn
+    except json.JSONDecodeError:
+        return None, None, (400, "Invalid JSONL record")
+    if not has_records:
+        return None, None, (404, "Log is empty")
+    return current_events, last_decision_turn, None
+
+
+def check_pending_decision(state, current_events, turn, last_riot_turn):
     if not isinstance(state, dict) or turn is None:
         return None
-    if decision_already_logged(tail_buffer, turn, "riot_response"):
+    if decision_logged_in_turn(current_events, "riot_response"):
         return None
-    if decision_already_logged(tail_buffer, turn, "scandal_management"):
+    if decision_logged_in_turn(current_events, "scandal_management"):
+        return None
+    if last_riot_turn is not None and (turn - last_riot_turn) <= COOLDOWN_TURNS:
         return None
 
     revolt_risk = state.get("revolt_risk", 0)
     security_trigger = False
-    for item in tail_buffer:
-        event = item.get("event") or {}
+    for event in current_events:
         tags = event.get("cause_tags", []) or []
         severity = event.get("severity", 0) or 0
         if "security" in tags and severity >= 3:
@@ -379,8 +438,7 @@ def check_pending_decision(state, tail_buffer, turn):
     if revolt_risk >= 40 or security_trigger:
         return "riot_response"
 
-    for item in tail_buffer:
-        event = item.get("event") or {}
+    for event in current_events:
         tags = event.get("cause_tags", []) or []
         actor = event.get("actor")
         if actor == "Spymaster" and ("intel" in tags or "politics" in tags):
@@ -389,15 +447,18 @@ def check_pending_decision(state, tail_buffer, turn):
     return None
 
 
-def pending_decision_for(path, tail):
-    cursor = read_cursor(path)
+def pending_decision_for(path, tail, cursor_override=None):
+    cursor = cursor_override if cursor_override is not None else read_cursor(path)
     if cursor is None:
         return None, None, (404, "Cursor not initialized")
     scan, _unused, error = scan_log(path, tail, cursor)
     if error:
         return None, None, error
     state = scan["last_state_cursor"]
-    decision_id = check_pending_decision(state, scan["tail_buffer"], cursor)
+    current_events, last_riot_turn, error = scan_decision_context(path, cursor, "riot_response")
+    if error:
+        return None, None, error
+    decision_id = check_pending_decision(state, current_events, cursor, last_riot_turn)
     return decision_id, cursor, None
 
 
@@ -565,7 +626,9 @@ async def run_snapshot(request: RunRequest):
 async def pending_decision(request: PendingDecisionRequest):
     if request.scenario not in VALID_SCENARIOS:
         return error_response(400, "Invalid scenario")
-    path = resolve_run_path(request.scenario, request.seed, request.turns, request.log_path)
+    path = Path(request.log_path) if request.log_path else resolve_run_path(
+        request.scenario, request.seed, request.turns, None
+    )
     if not path.exists():
         return error_response(404, f"Log not found: {path}")
     decision_id, cursor, error = pending_decision_for(path, request.tail)
@@ -600,12 +663,35 @@ async def decide(request: DecisionRequest):
     path = resolve_run_path(request.scenario, request.seed, request.turns, request.log_path)
     if not path.exists():
         return error_response(404, f"Log not found: {path}")
-    decision_id, cursor, error = pending_decision_for(path, 20)
+    cursor = read_cursor(path)
+    if cursor is None:
+        return error_response(404, "Cursor not initialized")
+    current_events, _last_decision_turn, error = scan_decision_context(
+        path, cursor, request.decision_id
+    )
+    if error:
+        status_code, message = error
+        return error_response(status_code, message)
+    if decision_logged_in_turn(current_events, request.decision_id):
+        snapshot_data, error = build_snapshot(
+            request.scenario, request.seed, request.turns, 200, str(path)
+        )
+        if error:
+            status_code, message = error
+            return error_response(status_code, message)
+        return snapshot_data
+
+    decision_id, cursor, error = pending_decision_for(path, 20, cursor_override=cursor)
     if error:
         status_code, message = error
         return error_response(status_code, message)
     if decision_id != request.decision_id:
         return error_response(400, "No pending decision")
+
+    error = ensure_event_objects(path)
+    if error:
+        status_code, message = error
+        return error_response(status_code, message)
 
     scan, _unused, error = scan_log(path, 5, cursor)
     if error:
@@ -615,6 +701,8 @@ async def decide(request: DecisionRequest):
     if not isinstance(state, dict):
         return error_response(404, "State not found")
 
+    state_snapshot = dict(state)
+    state_snapshot["turn"] = cursor
     cause_tags = ["security", "policy"] if request.decision_id == "riot_response" else ["intel", "politics"]
     stakeholders = ["Chancellor", "General"] if request.decision_id == "riot_response" else ["Spymaster", "Chancellor"]
     event = {
@@ -629,7 +717,9 @@ async def decide(request: DecisionRequest):
         "effects": effects,
         "duration": effects.get("duration", 0),
     }
-    append_event_record(path, state, event)
+    if request.decision_id == "riot_response":
+        event["meta"] = {"cooldown_until": cursor + COOLDOWN_TURNS}
+    append_event_record(path, state_snapshot, event)
 
     meta = read_meta(path)
     meta["decisions"].append(
@@ -683,6 +773,11 @@ async def set_budget(request: BudgetRequest):
     }
     write_meta(path, meta)
 
+    error = ensure_event_objects(path)
+    if error:
+        status_code, message = error
+        return error_response(status_code, message)
+
     scan, _unused, error = scan_log(path, 5, cursor)
     if error:
         status_code, message = error
@@ -721,16 +816,16 @@ async def next_turn(request: SnapshotRequest):
     if not path.exists():
         return error_response(404, f"Log not found: {path}")
 
-    pending_id, _cursor, error = pending_decision_for(path, 20)
+    cursor = read_cursor(path)
+    if cursor is None:
+        cursor = 0
+
+    pending_id, _cursor, error = pending_decision_for(path, 20, cursor_override=cursor)
     if error:
         status_code, message = error
         return error_response(status_code, message)
     if pending_id:
         return error_response(400, "Decision required")
-
-    cursor = read_cursor(path)
-    if cursor is None:
-        cursor = 0
 
     scan, _unused, error = scan_log(path, request.tail, None)
     if error:
@@ -1170,6 +1265,8 @@ async def demo_page():
           }
           const snapshot = await response.json();
           updateSnapshot(snapshot);
+          setNextTurnLock(false);
+          renderDecisionCard(null);
         } catch (err) {
           setError(err.message);
         } finally {
@@ -1177,7 +1274,7 @@ async def demo_page():
         }
       }
 
-      function updateSnapshot(data) {
+      function updateSnapshot(data, checkPending) {
         setError(data.error || null);
         if (data.log_path) {
           currentLogPath = data.log_path;
@@ -1223,7 +1320,8 @@ async def demo_page():
         if (!data.events || data.events.length === 0) {
           feed.innerHTML = "<div class='feed-item'>최근 이벤트 없음</div>";
         } else {
-          data.events.forEach((event) => {
+          const sortedEvents = [...data.events].sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0));
+          sortedEvents.forEach((event) => {
             const tags = (event.cause_tags || []).join(", ");
             const title = event.title || event.id || "unknown";
             const line = document.createElement("div");
@@ -1267,8 +1365,9 @@ async def demo_page():
             actors.appendChild(card);
           });
         }
-
-        fetchPendingDecision();
+        if (checkPending) {
+          fetchPendingDecision();
+        }
       }
 
       document.getElementById("explain").addEventListener("click", (event) => {
@@ -1305,7 +1404,7 @@ async def demo_page():
             throw new Error(`HTTP ${response.status}`);
           }
           const snapshot = await response.json();
-          updateSnapshot(snapshot);
+          updateSnapshot(snapshot, true);
         } catch (err) {
           setError(err.message);
         }
@@ -1389,7 +1488,7 @@ async def demo_page():
             throw new Error(`HTTP ${response.status}`);
           }
           const snapshot = await response.json();
-          updateSnapshot(snapshot);
+          updateSnapshot(snapshot, true);
         } catch (err) {
           setError(err.message);
         } finally {
