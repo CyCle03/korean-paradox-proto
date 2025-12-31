@@ -31,11 +31,11 @@ uvicorn app.main:app --reload
 
 - 브라우저 접속: `http://127.0.0.1:8000/`
 - 시나리오: `baseline`, `famine`, `deficit`, `warlord`
-추천 데모 흐름:
-- `scenario=warlord`, `seed=42`, `turns=120` 설정
-- Run 버튼으로 로그 생성
-- Explain 버튼으로 위기 상황 요약(드라마틱 3문장)
-- Chronicle 버튼으로 10년간의 연대기 요약(6~10줄)
+- 추천 데모 흐름:
+  - `scenario=warlord`, `seed=42`, `turns=120` 설정
+  - Run 버튼으로 로그 생성
+  - Explain 버튼으로 위기 상황 요약(드라마틱 3문장)
+  - Chronicle 버튼으로 10년간의 연대기 요약(6~10줄)
 
 같은 시뮬 결과를 두 가지 톤(연출용 / 기록용)으로 비교하는 것이 핵심 포인트다.
 
@@ -50,6 +50,23 @@ uvicorn app.main:app --reload
 - `POST /ai/chronicle`: 연대기 요약
 - `POST /api/pending_decision`, `POST /api/decide`: 결단 이벤트 처리
 - `POST /api/set_budget`: 예산 배분 이벤트 처리
+
+---
+
+## 결정/예산 흐름 (UI 기준)
+
+- 결단 이벤트는 해당 turn 조건을 만족할 때만 등장한다.
+- 결단이 떠 있는 동안 Next Turn이 잠기며, 선택 후 바로 해제된다.
+- 예산 배분은 5턴마다 가능하며, 합계가 100이어야 한다.
+
+---
+
+## 로그/메타 파일
+
+- 실행 로그: `logs/run_*.jsonl`
+- 커서: `logs/run_*.jsonl.cursor`
+- 결단/예산 메타: `logs/run_*.jsonl.meta.json`
+- 최대 턴 정보: `logs/run_*.jsonl.maxturn`
 
 ---
 
